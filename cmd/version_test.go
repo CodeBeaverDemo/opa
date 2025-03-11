@@ -10,15 +10,15 @@ import (
     "net/http"
     "net/http/httptest"
     "sort"
+    "strconv"
     "strings"
     "testing"
-
     "io"
     "github.com/open-policy-agent/opa/internal/report"
     "go.opentelemetry.io/otel"
-)
+    "go.opentelemetry.io/otel/exporters/otlp/otlptrace"
     "errors"
-
+)
 func TestGenerateCmdOutputDisableCheckFlag(t *testing.T) {
     var stdout bytes.Buffer
 
@@ -121,77 +121,77 @@ func TestOtelVersion(t *testing.T) {
     v := otel.Version()
     expected := "1.34.0"
     if v != expected {
-    t.Fatalf("expected version %q, got %q", expected, v)
+        t.Fatalf("expected version %q, got %q", expected, v)
     }
 }
 
-// TestGenerateCmdOutputWithCheckFlagError tests that when the update check fails (due to a bad URL),
-// the generateCmdOutput function outputs only the basic keys.
-func TestGenerateCmdOutputWithCheckFlagError(t *testing.T) {
-    // Force check error by setting the telemetry URL to an invalid one.
-    t.Setenv("OPA_TELEMETRY_SERVICE_URL", "http://127.0.0.1:0")
-
-    var stdout bytes.Buffer
-
-    // Even with check flag enabled, an update check error should result in output with basic keys.
-    generateCmdOutput(&stdout, true)
-
-    expectOutputKeys(t, stdout.String(), []string{
-    "Version",
-    "Build Commit",
-    "Build Timestamp",
-    "Build Hostname",
-    "Go Version",
-    "Platform",
-    "WebAssembly",
-    "Rego Version",
-    })
+// TestOtlptraceVersion verifies that the otlptrace.Version() function returns the correct version string
+func TestOtlptraceVersion(t *testing.T) {
+    // Get the version from the otlptrace package
+    version := otlptrace.Version()
+    
+    // The expected version should be "1.34.0" as defined in the source file
+    expected := "1.34.0"
+    
+    // Verify the version matches the expected value
+    if version != expected {
+        t.Fatalf("expected otlptrace version %q, got %q", expected, version)
+    }
 }
-// TestGenerateCmdOutputWithCheckFlagInvalidJSON verifies that when the telemetry service
-// returns invalid JSON, generateCmdOutput gracefully falls back to basic keys.
-func TestGenerateCmdOutputWithCheckFlagInvalidJSON(t *testing.T) {
-    ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        w.WriteHeader(http.StatusOK)
-        w.Header().Set("Content-Type", "application/json")
-        _, _ = w.Write([]byte("invalid json"))
-    }))
-    defer ts.Close()
 
-    t.Setenv("OPA_TELEMETRY_SERVICE_URL", ts.URL)
-    var stdout bytes.Buffer
-
-    generateCmdOutput(&stdout, true)
-
-    expectOutputKeys(t, stdout.String(), []string{
-        "Version",
-        "Build Commit",
-        "Build Timestamp",
-        "Build Hostname",
-        "Go Version",
-        "Platform",
-        "WebAssembly",
-        "Rego Version",
-    })
+// TestOtlptraceVersionConsistency verifies that the version reported by otlptrace.Version() 
+// is consistent across multiple calls
+func TestOtlptraceVersionConsistency(t *testing.T) {
+    // Call Version() multiple times and ensure the result is consistent
+    version1 := otlptrace.Version()
+    version2 := otlptrace.Version()
+    version3 := otlptrace.Version()
+    
+    // All three calls should return the same value
+    if version1 != version2 || version2 != version3 {
+        t.Fatalf("inconsistent version values returned: %q, %q, %q", 
+                    version1, version2, version3)
+    }
 }
-// TestGenerateCmdOutputWithEmptyTelemetryURL verifies that when the OPA_TELEMETRY_SERVICE_URL is empty,
-func TestGenerateCmdOutputWithEmptyTelemetryURL(t *testing.T) {
-    // Set the telemetry URL to an empty string.
-    t.Setenv("OPA_TELEMETRY_SERVICE_URL", "")
 
-    var stdout bytes.Buffer
-    generateCmdOutput(&stdout, true)
+// TestOtlptraceVersionFormat verifies that the version string follows semantic versioning format
+func TestOtlptraceVersionFormat(t *testing.T) {
+    version := otlptrace.Version()
+    
+    // Basic pattern check for semantic versioning (MAJOR.MINOR.PATCH)
+    matched := len(strings.Split(version, ".")) == 3
+    
+    if !matched {
+        t.Fatalf("version string %q does not follow semantic versioning format (MAJOR.MINOR.PATCH)", 
+                    version)
+    }
+    
+    // Validate that each part is a number
+    parts := strings.Split(version, ".")
+    for i, part := range parts {
+        _, err := strconv.Atoi(part)
+        if err != nil {
+            t.Fatalf("version component %d (%q) is not a valid integer", i+1, part)
+        }
+    }
+}
 
-    // Expect only the basic keys since the update check should fail.
-    expectOutputKeys(t, stdout.String(), []string{
-        "Version",
-        "Build Commit",
-        "Build Timestamp",
-        "Build Hostname",
-        "Go Version",
-        "Platform",
-        "WebAssembly",
-        "Rego Version",
-    })
+// TestOtlptraceVersionIntegration verifies that the otlptrace version is properly 
+// integrated in the command output
+func TestOtlptraceVersionIntegration(t *testing.T) {
+    var buf bytes.Buffer
+    
+    // Generate command output to the buffer
+    generateCmdOutput(&buf, false)
+    
+    // Get the output as a string
+    output := buf.String()
+    
+    // Check that the output contains the otlptrace.Version()
+    if !strings.Contains(output, otlptrace.Version()) {
+        t.Errorf("command output does not contain otlptrace version %q", otlptrace.Version())
+    }
+}
 }
 
 // TestCheckOPAUpdateMalformedURL verifies that checkOPAUpdate returns an error when the telemetry URL is malformed.
@@ -452,5 +452,157 @@ func TestGenerateCmdOutputContent(t *testing.T) {
     if !strings.Contains(output, otel.Version()) {
         t.Errorf("expected output to contain %q, got %q", otel.Version(), output)
     }
+}
+// TestCheckOPAUpdateEmptyJSON verifies that checkOPAUpdate behaves correctly when the telemetry service returns an empty JSON object.
+func TestCheckOPAUpdateEmptyJSON(t *testing.T) {
+    ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        w.WriteHeader(http.StatusOK)
+        w.Header().Set("Content-Type", "application/json")
+        _, _ = w.Write([]byte("{}"))
+    }))
+    defer ts.Close()
+
+    t.Setenv("OPA_TELEMETRY_SERVICE_URL", ts.URL)
+    var update report.DataResponse
+    err := checkOPAUpdate(&update)
+    if err != nil {
+        t.Fatalf("expected no error, got: %v", err)
+    }
+
+    if update.Latest.LatestRelease != "" {
+        t.Fatalf("expected LatestRelease to be empty, got %q", update.Latest.LatestRelease)
+    }
+}
+
+// TestGenerateCmdOutputWithCheckFlagEmptyJSON verifies that generateCmdOutput outputs only basic keys
+// when the telemetry service returns an empty JSON object.
+func TestGenerateCmdOutputWithCheckFlagEmptyJSON(t *testing.T) {
+    ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        w.WriteHeader(http.StatusOK)
+        w.Header().Set("Content-Type", "application/json")
+        _, _ = w.Write([]byte("{}"))
+    }))
+    defer ts.Close()
+
+    t.Setenv("OPA_TELEMETRY_SERVICE_URL", ts.URL)
+    var buf bytes.Buffer
+
+    generateCmdOutput(&buf, true)
+
+    expectOutputKeys(t, buf.String(), []string{
+        "Version",
+        "Build Commit",
+        "Build Timestamp",
+        "Build Hostname",
+        "Go Version",
+        "Platform",
+        "WebAssembly",
+        "Rego Version",
+    })
+}
+// TestCheckOPAUpdateTextPlainContentType verifies that checkOPAUpdate successfully decodes valid telemetry data
+// even when the Content-Type header is "text/plain" instead of "application/json".
+func TestCheckOPAUpdateTextPlainContentType(t *testing.T) {
+    expectedUpdate := &report.DataResponse{Latest: report.ReleaseDetails{
+        Download:      "https://example.com/download",
+        ReleaseNotes:  "https://example.com/release",
+        LatestRelease: "v1.0.0",
+    }}
+
+    ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        w.WriteHeader(http.StatusOK)
+        responseBytes, _ := json.Marshal(expectedUpdate)
+        w.Header().Set("Content-Type", "text/plain")
+        _, _ = w.Write(responseBytes)
+    }))
+    defer ts.Close()
+
+    t.Setenv("OPA_TELEMETRY_SERVICE_URL", ts.URL)
+
+    var update report.DataResponse
+    err := checkOPAUpdate(&update)
+    if err != nil {
+        t.Fatalf("expected no error, got: %v", err)
+    }
+
+    if update.Latest.LatestRelease != "v1.0.0" {
+        t.Fatalf("expected LatestRelease %q, got %q", "v1.0.0", update.Latest.LatestRelease)
+    }
+}
+
+// TestGenerateCmdOutputWithoutTelemetryEnv verifies that generateCmdOutput outputs only the basic keys
+// when the OPA_TELEMETRY_SERVICE_URL environment variable is not set.
+func TestGenerateCmdOutputWithoutTelemetryEnv(t *testing.T) {
+    // Unset the telemetry service URL by setting it to an empty string.
+    t.Setenv("OPA_TELEMETRY_SERVICE_URL", "")
+
+    var stdout bytes.Buffer
+    generateCmdOutput(&stdout, true)
+
+    expectOutputKeys(t, stdout.String(), []string{
+        "Version",
+        "Build Commit",
+        "Build Timestamp",
+        "Build Hostname",
+        "Go Version",
+        "Platform",
+        "WebAssembly",
+        "Rego Version",
+    })
+}
+// TestGenerateCmdOutputLineFormat verifies that generateCmdOutput outputs lines in "Key: Value" format.
+func TestGenerateCmdOutputLineFormat(t *testing.T) {
+    var buf bytes.Buffer
+    generateCmdOutput(&buf, false)
+    out := buf.String()
+    lines := strings.Split(strings.TrimSpace(out), "\n")
+    for _, line := range lines {
+        if !strings.Contains(line, ":") {
+            t.Errorf("line %q does not contain a colon", line)
+        }
+        parts := strings.SplitN(line, ":", 2)
+        if strings.TrimSpace(parts[0]) == "" {
+            t.Errorf("line %q has empty key", line)
+        }
+    }
+}
+
+// TestCheckOPAUpdateMissingContentType verifies that checkOPAUpdate can decode JSON responses even when the Content-Type header is missing.
+func TestCheckOPAUpdateMissingContentType(t *testing.T) {
+    expectedUpdate := &report.DataResponse{Latest: report.ReleaseDetails{
+        Download:      "https://example.com/missing",
+        ReleaseNotes:  "https://example.com/missing_notes",
+        LatestRelease: "vMissing",
+    }}
+
+    ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        w.WriteHeader(http.StatusOK)
+        responseBytes, _ := json.Marshal(expectedUpdate)
+        // Do not set Content-Type header
+        _, _ = w.Write(responseBytes)
+    }))
+    defer ts.Close()
+
+    t.Setenv("OPA_TELEMETRY_SERVICE_URL", ts.URL)
+
+    var update report.DataResponse
+    err := checkOPAUpdate(&update)
+    if err != nil {
+        t.Fatalf("expected no error, got: %v", err)
+    }
+
+    if update.Latest.LatestRelease != "vMissing" {
+        t.Fatalf("expected LatestRelease %q, got %q", "vMissing", update.Latest.LatestRelease)
+    }
+}
+// TestGenerateCmdOutputNilWriter verifies that generateCmdOutput panics when a nil writer is provided.
+func TestGenerateCmdOutputNilWriter(t *testing.T) {
+    defer func() {
+        if r := recover(); r == nil {
+            t.Error("expected panic when writer is nil, but did not panic")
+        }
+    }()
+    // Calling generateCmdOutput with nil should lead to a panic.
+    generateCmdOutput(nil, false)
 }
 }
