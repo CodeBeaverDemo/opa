@@ -848,4 +848,133 @@ func TestGenerateCmdOutputCustomUpdateKeys(t *testing.T) {
         t.Errorf("expected custom release notes URL in output, got: %q", output)
     }
 }
+// TestCheckOPAUpdateInvalidScheme tests that checkOPAUpdate returns an error when an unsupported URL scheme is provided.
+func TestCheckOPAUpdateInvalidScheme(t *testing.T) {
+    // Set OPA_TELEMETRY_SERVICE_URL to a URL with an unsupported scheme (ftp://)
+    t.Setenv("OPA_TELEMETRY_SERVICE_URL", "ftp://example.com")
+
+    err := checkOPAUpdate(nil)
+    if err == nil {
+        t.Fatal("expected error due to unsupported ftp scheme, got nil")
+    }
+}
+}
+
+// TestOtelAndOtlptraceVersionConsistency ensures that the otel.Version() and otlptrace.Version() return the same version string.
+func TestOtelAndOtlptraceVersionConsistency(t *testing.T) {
+    v1 := otel.Version()
+    v2 := otlptrace.Version()
+
+    if v1 != v2 {
+        t.Errorf("expected otel version (%q) to match otlptrace version (%q)", v1, v2)
+    }
+}
+// TestGenerateCmdOutputEmptyBuildInfo verifies that generateCmdOutput prints empty build info when build envs are not set.
+func TestGenerateCmdOutputEmptyBuildInfo(t *testing.T) {
+    // Set the build info environment variables to empty.
+    t.Setenv("OPA_BUILD_COMMIT", "")
+    t.Setenv("OPA_BUILD_TIMESTAMP", "")
+    t.Setenv("OPA_BUILD_HOSTNAME", "")
+
+    var buf bytes.Buffer
+    generateCmdOutput(&buf, false)
+    output := buf.String()
+
+    // Ensure that the output contains the build keys even if their values are empty.
+    if !strings.Contains(output, "Build Commit:") {
+        t.Error("expected output to contain 'Build Commit:' key")
+    }
+    if !strings.Contains(output, "Build Timestamp:") {
+        t.Error("expected output to contain 'Build Timestamp:' key")
+    }
+    if !strings.Contains(output, "Build Hostname:") {
+        t.Error("expected output to contain 'Build Hostname:' key")
+    }
+}
+
+// TestGenerateCmdOutputLongValues verifies that generateCmdOutput correctly handles and prints very long build info values.
+func TestGenerateCmdOutputLongValues(t *testing.T) {
+    // Create a very long string.
+    longStr := strings.Repeat("x", 1000)
+    t.Setenv("OPA_BUILD_COMMIT", longStr)
+    t.Setenv("OPA_BUILD_TIMESTAMP", longStr)
+    t.Setenv("OPA_BUILD_HOSTNAME", longStr)
+
+    var buf bytes.Buffer
+    generateCmdOutput(&buf, false)
+    output := buf.String()
+
+    // Check that the very long string appears (at least once) in the output.
+    if !strings.Contains(output, longStr) {
+        t.Error("expected output to contain the long build info values")
+    }
+}
+// TestGenerateCmdOutputPartialUpdate tests that generateCmdOutput prints update keys even when some update fields are missing.
+func TestGenerateCmdOutputPartialUpdate(t *testing.T) {
+    // Create a partial update response with missing "Download" field.
+    partialUpdate := map[string]interface{}{
+        "Latest": map[string]interface{}{
+            "LatestRelease": "vpartial",
+            "ReleaseNotes":  "https://partial.example.com/notes",
+        },
+    }
+    ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        bs, err := json.Marshal(partialUpdate)
+        if err != nil {
+            t.Fatalf("failed to marshal partial update: %v", err)
+        }
+        w.Header().Set("Content-Type", "application/json")
+        w.WriteHeader(http.StatusOK)
+        w.Write(bs)
+    }))
+    defer ts.Close()
+
+    t.Setenv("OPA_TELEMETRY_SERVICE_URL", ts.URL)
+
+    var buf bytes.Buffer
+    generateCmdOutput(&buf, true)
+    output := buf.String()
+
+    // Check that the update keys appear even if "Download" is missing.
+    if !strings.Contains(output, "Latest Upstream Version: vpartial") {
+        t.Errorf("expected 'Latest Upstream Version: vpartial' in output, got: %q", output)
+    }
+    if !strings.Contains(output, "Release Notes: https://partial.example.com/notes") {
+        t.Errorf("expected 'Release Notes: https://partial.example.com/notes' in output, got: %q", output)
+    }
+    if !strings.Contains(output, "Download:") {
+        t.Errorf("expected key 'Download:' to appear in output even if its value is empty, got: %q", output)
+    }
+}
+
+// TestCheckOPAUpdateNonStruct tests that checkOPAUpdate returns an error when provided with a pointer
+// to a non-struct type (which cannot be unmarshaled properly into).
+func TestCheckOPAUpdateNonStruct(t *testing.T) {
+    // Set up a test server with a valid update response.
+    validResp := map[string]interface{}{
+        "Latest": map[string]interface{}{
+            "Download":      "https://example.com/dl",
+            "ReleaseNotes":  "https://example.com/notes",
+            "LatestRelease": "vnonstruct",
+        },
+    }
+    ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        bs, err := json.Marshal(validResp)
+        if err != nil {
+            t.Fatalf("failed to marshal valid response: %v", err)
+        }
+        w.Header().Set("Content-Type", "application/json")
+        w.WriteHeader(http.StatusOK)
+        w.Write(bs)
+    }))
+    defer ts.Close()
+
+    t.Setenv("OPA_TELEMETRY_SERVICE_URL", ts.URL)
+
+    // Pass a pointer to an int (non-struct) to checkOPAUpdate.
+    var nonStruct int
+    err := checkOPAUpdate(&nonStruct)
+    if err == nil {
+        t.Fatal("expected error when passing pointer to non-struct type, but got nil")
+    }
 }
